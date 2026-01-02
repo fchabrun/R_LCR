@@ -17,12 +17,15 @@ if (input$auto_tangent_checkbox) {
   computation_results <- reactive_sample_data$manual_computation_results
 }
 ```
- 
- 
-`r paste0("\\textcolor{red}{\r\n\r\n\r\nAvertissements:", paste(paste0("\r\n\r\n* ", computation_results$warning_items), collapse=""), "}")`
 
 ```{r, echo=FALSE, warning=FALSE}
-if (computation_results$warning_level < WARNING_LEVEL_WARN) {  # TODO change to STOP
+print(reactive_sample_data$temp_ggp)
+```
+ 
+`r if (computation_results$warning_level > WARNING_LEVEL_OK){paste0("\r\n\r\n\r\n\\textcolor{red}{Avertissements:}", paste(paste0("\r\n\r\n* \\textcolor{red}{", computation_results$warning_items, "}"), collapse=""), "")}`
+
+```{r, echo=FALSE, warning=FALSE}
+if (computation_results$warning_level < WARNING_LEVEL_STOP) {
   output_dt <- data.frame(`Paramètre`=c("DO hémoglobine (courbe)",
                                         "DO hémoglobine (tangente)",
                                         "DO bilirubine (courbe)",
@@ -38,7 +41,7 @@ if (computation_results$warning_level < WARNING_LEVEL_WARN) {  # TODO change to 
 ```
 
 ```{r, echo=FALSE, warning=FALSE}
-if (computation_results$warning_level < WARNING_LEVEL_WARN) {  # TODO change to STOP
+if (computation_results$warning_level < WARNING_LEVEL_STOP) {
   output_dt <- data.frame(`Paramètre`=c("Delta DO hémoglobine",
                                         "Delta DO bilirubine"),
                           `Résultat`=c(round(computation_results$hb_delta_do, 4),
@@ -51,4 +54,4 @@ if (computation_results$warning_level < WARNING_LEVEL_WARN) {  # TODO change to 
 }
 ```
 
-`r if(computation_results$warning_level < WARNING_LEVEL_WARN){paste0("**Conclusion:** ", computation_results$com_concl)} else {"Impossible d'interpréter le spectre."}`
+`r if(computation_results$warning_level < WARNING_LEVEL_STOP){paste0("**Conclusion:** ", computation_results$com_concl)} else {"Impossible d'interpréter le spectre."}`

@@ -8,8 +8,6 @@
 #
 rm(list = ls())
 
-# TODO warnings et erreurs sur PDF
-# TODO si erreur bloquante: ne pas afficher les résultats (sur PDF)
 # TODO problème pdflatex sur pdf ordi spectro -> à installer!
 
 library(openxlsx)
@@ -600,6 +598,9 @@ server <- function(input, output, session) {
 
     output$spectrum_inputs_outputs <- renderUI({
       req(reactive_sample_data$data_loaded)
+      # if (is.null(input$auto_tangent_checkbox)) {
+      #   req(FALSE)
+      # }
       if (input$auto_tangent_checkbox) {
         computation_results <- reactive_sample_data$auto_computation_results
       } else {
