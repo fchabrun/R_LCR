@@ -8,11 +8,9 @@
 #
 rm(list = ls())
 
-# TODO charger les fichiers .tst d'emblée? -> cela n'a pas l'air si compliqué mais à vérifier un jour...
-# TODO   voir TEST qui marche du 1/1/2026!!! on peut le faire!
+# TODO warnings et erreurs sur PDF
+# TODO si erreur bloquante: ne pas afficher les résultats (sur PDF)
 # TODO problème pdflatex sur pdf ordi spectro -> à installer!
-# TODO vérifier si valeurs < 0 et ne pas valider le spectre
-# TODO afficher données démographiques, etc. (ou nom du fichier) sur le compte-rendu du LCR
 
 library(openxlsx)
 library(smoothr)
@@ -36,6 +34,11 @@ CHECK_LEFT = 350
 CHECK_RIGHT = 750
 HB_LAMBDA = 415
 BL_LAMBDA = 476
+WARNING_LEVEL_OK = 0
+WARNING_LEVEL_WARN = 1
+WARNING_LEVEL_STOP = 2
+RESIDUALS_THRESHOLD_WARNING = 1e-4
+RESIDUALS_THRESHOLD_ERROR = 1e-3
 
 # functions
 load_data_xl <- function(file_path) {
@@ -230,7 +233,52 @@ get_auto_best_tangent_parameters <- function(absorbance_df) {
 
 compute_quantitative_results <- function(absorbance_df, method) {
   computation_results <- list()
-
+  
+  warning_level = WARNING_LEVEL_OK
+  warning_items = list()
+  if (any(absorbance_df$raw_abs < 0)) {
+    warning_items[[length(warning_items) + 1]] <- "Valeurs d'absorbance < 0!"
+    warning_level <- max(warning_level, WARNING_LEVEL_WARN)
+  }
+  if (any(absorbance_df$raw_abs[(absorbance_df$lambda < 550)] < 0)) {
+    warning_items[[length(warning_items) + 1]] <- "Valeurs d'absorbance < 0 entre 350 et 550nm!"
+    warning_level <- max(warning_level, WARNING_LEVEL_STOP)
+  }
+  if (method!="auto") {
+    warning_items[[length(warning_items) + 1]] <- "Méthode manuelle choisie: vérifier la cohérence des résultats!"
+    warning_level <- max(warning_level, WARNING_LEVEL_WARN)
+  }
+  if (method=="auto") {
+    tg_values <- absorbance_df$tangent_auto
+  } else {
+    tg_values <- absorbance_df$tangent_manual
+  }
+  tangent_crosses_0_at_lambda <- max(absorbance_df$lambda[tg_values > 0])
+  if (tangent_crosses_0_at_lambda < BL_LAMBDA) {
+    warning_items[[length(warning_items) + 1]] <- paste0("La tangeante passe par zéro avant ", BL_LAMBDA, "nm!")
+    warning_level <- max(warning_level, WARNING_LEVEL_WARN)
+  }
+  spectrum_residuals <- (absorbance_df$smooth_abs - tg_values)[(absorbance_df$lambda >= INF_POINT_LEFT_LLOW) & (absorbance_df$lambda <= INF_POINT_RIGHT_LHIGH)]
+  # n_crossing_points <- sum((spectrum_residuals[1:(length(spectrum_residuals) - 1)] < 0) == (spectrum_residuals[2:length(spectrum_residuals)] >= 0))
+  sum_total_residuals <- sum(-spectrum_residuals[spectrum_residuals < 0])
+  if (sum_total_residuals > RESIDUALS_THRESHOLD_ERROR) {
+    if (method=="auto") {
+      warning_items[[length(warning_items) + 1]] <- paste0("Impossible de trouver une tangente sans couper la courbe entre ", INF_POINT_LEFT_LLOW, " et ", INF_POINT_RIGHT_LHIGH, "nm!")
+      warning_level <- max(warning_level, WARNING_LEVEL_STOP)
+    } else {
+      warning_items[[length(warning_items) + 1]] <- paste0("Les positions choisies sont invalides: la tangente passe au-dessus de la courbe entre ", INF_POINT_LEFT_LLOW, " et ", INF_POINT_RIGHT_LHIGH, "nm!")
+      warning_level <- max(warning_level, WARNING_LEVEL_STOP)
+    }
+  } else if (sum_total_residuals > RESIDUALS_THRESHOLD_WARNING) {
+    if (method=="auto") {
+      warning_items[[length(warning_items) + 1]] <- paste0("Impossible de trouver une tangente sans couper la courbe entre ", INF_POINT_LEFT_LLOW, " et ", INF_POINT_RIGHT_LHIGH, "nm!")
+      warning_level <- max(warning_level, WARNING_LEVEL_WARN)
+    } else {
+      warning_items[[length(warning_items) + 1]] <- paste0("Les positions choisies sont douteuses: la tangente passe au-dessus de la courbe entre ", INF_POINT_LEFT_LLOW, " et ", INF_POINT_RIGHT_LHIGH, "nm!")
+      warning_level <- max(warning_level, WARNING_LEVEL_WARN)
+    }
+  }
+  
   hb_trace_do <- absorbance_df$smooth_abs[absorbance_df$lambda == HB_LAMBDA]
   bl_trace_do <- absorbance_df$smooth_abs[absorbance_df$lambda == BL_LAMBDA]
   
@@ -265,7 +313,9 @@ compute_quantitative_results <- function(absorbance_df, method) {
     }
   }
   
-  computation_results <- list(hb_trace_do=hb_trace_do, bl_trace_do=bl_trace_do,
+  computation_results <- list(warning_level=warning_level,
+                              warning_items=warning_items,
+                              hb_trace_do=hb_trace_do, bl_trace_do=bl_trace_do,
                               hb_tangent_do=hb_tangent_do, bl_tangent_do=bl_tangent_do,
                               hb_delta_do=hb_delta_do, bl_delta_do=bl_delta_do,
                               hb_concl=hb_concl, bl_concl=bl_concl,
@@ -282,8 +332,8 @@ plot_spectrum <- function(lambda, raw_abs, smooth_abs, tangent, tangent_paramete
                               tangent=tangent)
   
   ggp <- ggplot(data=absorbance_df) +
-    geom_line(mapping=aes(x=lambda, y=raw_abs), color="gray") +
-    geom_line(mapping=aes(x=lambda, y=smooth_abs), color="black")
+    geom_line(mapping=aes(x=lambda, y=raw_abs), color="gray", linewidth=.75) +
+    geom_line(mapping=aes(x=lambda, y=smooth_abs), color="black", linewidth=.75)
   
   if (adjust_scale) {
     ylim_min <- min(0, absorbance_df$raw_abs)
@@ -295,23 +345,28 @@ plot_spectrum <- function(lambda, raw_abs, smooth_abs, tangent, tangent_paramete
   
   if (all(!is.na(absorbance_df$tangent))) {
     ggp <- ggp +
-      geom_line(mapping=aes(x=lambda, y=tangent), color="red")
+      geom_line(mapping=aes(x=lambda, y=tangent), color="red", linewidth=.75)
     
     ggp <- ggp +
       geom_segment(data=data.frame(x=HB_LAMBDA,
                                    xend=HB_LAMBDA,
                                    y=0,
-                                   # y=absorbance_df$tangent[absorbance_df$lambda == HB_LAMBDA],
                                    yend=absorbance_df$raw_abs[absorbance_df$lambda == HB_LAMBDA]),
-                   mapping=aes(x=x, y=y, xend=xend, yend=yend), color="black", linetype='dotted') +
+                   mapping=aes(x=x, y=y, xend=xend, yend=yend), color="black", linetype='dotted', linewidth=1) +
       geom_segment(data=data.frame(x=BL_LAMBDA,
                                    xend=BL_LAMBDA,
                                    y=0,
-                                   # y=absorbance_df$tangent[absorbance_df$lambda == BL_LAMBDA],
                                    yend=absorbance_df$raw_abs[absorbance_df$lambda == BL_LAMBDA]),
-                   mapping=aes(x=x, y=y, xend=xend, yend=yend), color="black", linetype='dotted')
+                   mapping=aes(x=x, y=y, xend=xend, yend=yend), color="black", linetype='dotted', linewidth=1)
+    
+    ggp <- ggp +
+      geom_point(data=data.frame(x=c(tangent_parameters$left_lambda,
+                                     tangent_parameters$right_lambda),
+                                 y=c(absorbance_df$raw_abs[absorbance_df$lambda == tangent_parameters$left_lambda],
+                                     absorbance_df$raw_abs[absorbance_df$lambda == tangent_parameters$right_lambda])),
+                 mapping=aes(x=x, y=y), color="red", size=2)
   }
-  
+
   ggp <- ggp +
     ylim(ylim_min, ylim_max) +
     xlab("Longueur d'onde (nm)") +
@@ -385,14 +440,6 @@ server <- function(input, output, session) {
       absorbance_df <- load_data(file_path)
       # post process data
       absorbance_df <- intialize_spectrum_data(absorbance_df=absorbance_df)
-      
-      # TODO check if data is consistent so we know whether to display a warning
-      # TODO check if any values < 0
-      # TODO check if values before 476 < 0
-      # TODO check if tangent reaches 0 before X
-      # TODO check if 
-      # TODO print something BIG BOLD AND RED in case ANY ERROR OR ANY WARNING
-      # TODO check how much the tangent crosses the trace
 
       # auto tangent
       auto_tangent_parameters <- get_auto_best_tangent_parameters(absorbance_df)
@@ -433,19 +480,19 @@ server <- function(input, output, session) {
       
       # auto tangent
       auto_tangent_parameters <- get_auto_best_tangent_parameters(absorbance_df)
-      
+
       # create tangent from auto input
       auto_tangent_output <- create_tangent_data(absorbance_df=absorbance_df,
                                                  left_lambda=auto_tangent_parameters$left_lambda,
                                                  right_lambda=auto_tangent_parameters$right_lambda)
-      
+
       # store
       absorbance_df$tangent_auto <- auto_tangent_output$tangent_values
       absorbance_df$residuals_auto <- auto_tangent_output$residuals
       
       # compute quantification results
       computation_results <- compute_quantitative_results(absorbance_df, method="auto")
-      
+
       # store
       reactive_sample_data$absorbance_df = absorbance_df
       reactive_sample_data$auto_tangent_parameters = auto_tangent_parameters
@@ -493,6 +540,7 @@ server <- function(input, output, session) {
       req(reactive_sample_data$data_loaded)
       
       tagList(
+        htmlOutput("warning_output"),
         HTML("<strong>Paramètres</strong>"),
         checkboxInput("adjust_scale", "Ajuster l'échelle", TRUE),
         checkboxInput("auto_tangent_checkbox", "Déterminer automatiquement la tangente", TRUE),
@@ -552,6 +600,12 @@ server <- function(input, output, session) {
 
     output$spectrum_inputs_outputs <- renderUI({
       req(reactive_sample_data$data_loaded)
+      if (input$auto_tangent_checkbox) {
+        computation_results <- reactive_sample_data$auto_computation_results
+      } else {
+        computation_results <- reactive_sample_data$manual_computation_results
+      }
+      req(computation_results$warning_level < WARNING_LEVEL_STOP)
       
       tagList(
         HTML("<strong>Positions de la tangente</strong>"),
@@ -584,13 +638,17 @@ server <- function(input, output, session) {
       if (input$auto_tangent_checkbox) {
         tangent_method = "automatique"
         graphics_tangent_parameters <- reactive_sample_data$auto_tangent_parameters
+        computation_results <- reactive_sample_data$auto_computation_results
       } else {
         tangent_method = "manuelle"
+        computation_results <- reactive_sample_data$manual_computation_results
         graphics_tangent_parameters <- list(left_lambda=input$left_tangent_lambda,
                                             right_lambda=input$right_tangent_lambda)
       }
       
       req(graphics_tangent_parameters)
+      req(computation_results)
+      req(computation_results$warning_level < WARNING_LEVEL_STOP)
       
       tangent_parameters <- reactive_sample_data$tangent_parameters
       output_dt <- data.frame(`Tangente`=c("Méthode",
@@ -616,6 +674,7 @@ server <- function(input, output, session) {
       }
       
       req(computation_results)
+      req(computation_results$warning_level < WARNING_LEVEL_STOP)
       
       output_dt <- data.frame(`Paramètre`=c("DO hémoglobine (courbe)",
                                             "DO hémoglobine (tangente)",
@@ -641,6 +700,7 @@ server <- function(input, output, session) {
       }
       
       req(computation_results)
+      req(computation_results$warning_level < WARNING_LEVEL_STOP)
       
       output_dt <- data.frame(`Paramètre`=c("Delta DO hémoglobine",
                                             "Delta DO bilirubine"),
@@ -664,8 +724,35 @@ server <- function(input, output, session) {
       }
       
       req(computation_results)
+      req(computation_results$warning_level < WARNING_LEVEL_STOP)
       
       HTML(computation_results$com_concl)
+    })
+    
+    # warning output
+    output$warning_output <- renderUI({
+      req(reactive_sample_data$data_loaded)
+      
+      if (input$auto_tangent_checkbox) {
+        computation_results <- reactive_sample_data$auto_computation_results
+      } else {
+        computation_results <- reactive_sample_data$manual_computation_results
+      }
+      
+      req(computation_results)
+      
+      if (computation_results$warning_level == WARNING_LEVEL_OK) {
+        return(HTML(""))
+      } else if (computation_results$warning_level == WARNING_LEVEL_WARN) {
+        warn_color = "orange"
+      } else {
+        warn_color = "red"
+      }
+      
+      warning_items <- computation_results$warning_items
+      warning_text <- paste0("Avertissements:<ul>", paste(paste0("<li>", warning_items, "</li>"), collapse=""), "</ul>")
+      warning_text <- paste0("<b style='color:", warn_color, ";'>", warning_text, "</b>")
+      HTML(warning_text)
     })
     
     # generate report
