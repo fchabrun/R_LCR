@@ -1,0 +1,65 @@
+---
+output:
+  pdf_document:
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true
+---
+
+## Analyse spectrale du LCR
+
+**Fichier:** `r reactive_sample_data$original_fn`
+
+```{r, echo=FALSE, warning=FALSE}
+print(reactive_sample_data$temp_ggp)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+if (input$auto_tangent_checkbox) {
+  computation_results <- reactive_sample_data$auto_computation_results
+} else {
+  computation_results <- reactive_sample_data$manual_computation_results
+}
+
+output_dt <- data.frame(`Paramètre`=c("DO hémoglobine (courbe)",
+                                      "DO hémoglobine (tangente)",
+                                      "DO bilirubine (courbe)",
+                                      "DO bilirubine (tangente)"),
+                        `Mesure`=c(round(computation_results$hb_trace_do, 4),
+                                   round(computation_results$hb_tangent_do, 4),
+                                   round(computation_results$bl_trace_do, 4),
+                                   round(computation_results$bl_tangent_do, 4)))
+
+# return
+knitr::kable(output_dt, "pipe")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+if (input$auto_tangent_checkbox) {
+  computation_results <- reactive_sample_data$auto_computation_results
+} else {
+  computation_results <- reactive_sample_data$manual_computation_results
+}
+
+output_dt <- data.frame(`Paramètre`=c("Delta DO hémoglobine",
+                                      "Delta DO bilirubine"),
+                        `Résultat`=c(round(computation_results$hb_delta_do, 4),
+                                     round(computation_results$bl_delta_do, 4)),
+                        `Interprétation`=c(computation_results$hb_concl,
+                                           computation_results$bl_concl))
+
+# return
+knitr::kable(output_dt, "simple")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+if (input$auto_tangent_checkbox) {
+  computation_results <- reactive_sample_data$auto_computation_results
+} else {
+  computation_results <- reactive_sample_data$manual_computation_results
+}
+
+
+```
+
+**Conclusion:** `r computation_results$com_concl`
