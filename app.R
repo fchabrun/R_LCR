@@ -75,56 +75,82 @@ load_data_tst <- function(file_path) {
     if ((cur_value == "3500") & (next_value != "7500")) {
       trace_l <- numeric(0)
       trace_t <- numeric(0)
+      trace_valid = TRUE
       for(trace_index in seq(350, 750, 2)) {
         if (read_index + 1 > length(file_values)) {
-          stop("File ended in the middle of trace data")
+          print("File ended in the middle of trace data, stopping trace read")
+          trace_valid = F
+          break
         }
         cur_value <- as.numeric(file_values[read_index]) / 10
         next_value <- as.numeric(file_values[read_index + 1])
         if (is.na(cur_value)) {
-          stop(paste0("NA lambda found at position: ", read_index, ", expected: ", trace_index))
+          print(paste0("NA lambda found at position: ", read_index, ", expected: ", trace_index, ", stopping trace read"))
+          trace_valid = F
+          break
         }
         if (is.na(next_value)) {
-          stop(paste0("NA transmittance found at position: ", read_index, ", expected: ", trace_index))
+          print(paste0("NA transmittance found at position: ", read_index, ", expected: ", trace_index, ", stopping trace read"))
+          trace_valid = F
+          break
         }
         if (cur_value != trace_index) {
-          stop(paste0("Inconsistent lambda found at position: ", read_index, ", expected: ", trace_index, ", got: ", cur_value))
+          print(paste0("Inconsistent lambda found at position: ", read_index, ", expected: ", trace_index, ", got: ", cur_value, ", stopping trace read"))
+          trace_valid = F
+          break
         }
         trace_l <- c(trace_l, cur_value)
         trace_t <- c(trace_t, next_value)
         read_index = read_index + 2
       }
-      if (nrow(results_df) != length(trace_l)) {
-        stop("Trace data length is inconsistent")
+      # QC trace
+      if (trace_valid) {
+        if (nrow(results_df) != length(trace_l)) {
+          print("Trace data length is inconsistent, discarding trace")
+          trace_valid = F
+        }
+        if (any(results_df$lambda != trace_l)) {
+          print("Trace data lambdas list is inconsistent, discarding trace")
+          trace_valid = F
+        }
+        if (any(is.na(trace_l))) {
+          print("Trace data lambdas list contains missing values, discarding trace")
+          trace_valid = F
+        }
+        if (any(is.na(trace_t))) {
+          print("Trace data transmisttances list contains missing values, discarding trace")
+          trace_valid = F
+        }
       }
-      if (any(results_df$lambda != trace_l)) {
-        stop("Trace data lambdas list is inconsistent")
+      # store trace if valid
+      if (trace_valid) {
+        n_traces = n_traces + 1
+        results_df[, paste0("t_", n_traces)] <- trace_t
       }
-      if (any(is.na(trace_l))) {
-        stop("Trace data lambdas list contains missing values")
-      }
-      if (any(is.na(trace_t))) {
-        stop("Trace data transmisttances list contains missing values")
-      }
-      n_traces = n_traces + 1
-      results_df[, paste0("t_", n_traces)] <- trace_t
       # next steps
     }
     read_index = read_index + 1
   }
   # check that everything worked well
+  data_load_valid = T
   if (nrow(results_df) != 201) {
-    stop("Inconsistent number of columns after reading tst file data")
+    print("Inconsistent number of rows after reading tst file data, discarding loaded data")
+    data_load_valid = F
+  } else if (ncol(results_df) != 3) {
+    print("Inconsistent number of columns after reading tst file data, discarding loaded data")
+    data_load_valid = F
   }
-  if (ncol(results_df) != 3) {
-    stop("Inconsistent number of rows after reading tst file data")
+  if (data_load_valid) {
+    # post-process
+    for(trace_index in 1:n_traces) {
+      results_df[, paste0("abs_", trace_index)] <- log10(1 / results_df[, paste0("t_", n_traces)])
+    }
+    # encapsulate into a final df with correct column names
+    absorbance_df <- data.frame(lambda=results_df$lambda, raw_abs=results_df[, paste0("abs_", n_traces)])
+  } else {
+    print("Invalid data, creating dummy negative data")
+    absorbance_df <- data.frame(lambda=seq(350, 750, 2), raw_abs=rep(-1, 201))
   }
-  # post-process
-  for(trace_index in 1:n_traces) {
-    results_df[, paste0("abs_", trace_index)] <- log10(1 / results_df[, paste0("t_", n_traces)])
-  }
-  # encapsulate into a final df with correct column names
-  absorbance_df <- data.frame(lambda=results_df$lambda, raw_abs=results_df[, paste0("abs_", n_traces)])
   # return
   absorbance_df
 }
@@ -234,6 +260,10 @@ compute_quantitative_results <- function(absorbance_df, method) {
   
   warning_level = WARNING_LEVEL_OK
   warning_items = list()
+  if (all(absorbance_df$raw_abs == -1)) {
+    warning_items[[length(warning_items) + 1]] <- "Données invalides: impossible de charger le fichier spectre."
+    warning_level <- max(warning_level, WARNING_LEVEL_STOP)
+  }
   if (any(absorbance_df$raw_abs < 0)) {
     warning_items[[length(warning_items) + 1]] <- "Valeurs d'absorbance < 0!"
     warning_level <- max(warning_level, WARNING_LEVEL_WARN)
@@ -434,7 +464,7 @@ server <- function(input, output, session) {
       
       # load and format accordingly
       file_path <- file$datapath
-      # file_path = "C:/Users/flori/OneDrive - univ-angers.fr/Documents/Home/Hospital/Spectre LCR/R_LCR/data/test 01-01-2026/Spectre LCR + bili HEUVELINE Maxime 24.01.1989.tst"
+      # file_path = "C:/Users/flori/OneDrive - univ-angers.fr/Documents/Home/Hospital/Spectre LCR/R_LCR/data/test 01-01-2026/Spectre LCR + bili DORSO Maiwen 25082005.tst"
       absorbance_df <- load_data(file_path)
       # post process data
       absorbance_df <- intialize_spectrum_data(absorbance_df=absorbance_df)
