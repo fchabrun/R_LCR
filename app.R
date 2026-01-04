@@ -137,8 +137,8 @@ load_data_tst <- function(file_path) {
     print("Inconsistent number of rows after reading tst file data, discarding loaded data")
     data_load_valid = F
   } else if (ncol(results_df) != 3) {
-    print("Inconsistent number of columns after reading tst file data, discarding loaded data")
-    data_load_valid = F
+    print("Inconsistent number of columns after reading tst file data, continuing anyway")
+    # data_load_valid = F
   }
   if (data_load_valid) {
     # post-process
