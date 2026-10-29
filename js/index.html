@@ -2,11 +2,9 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <!-- Content Security Policy basique -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.plot.ly; style-src 'self' 'unsafe-inline';">
   <title>Analyse Spectrophotométrique LCR</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Plotly via CDN pour simplifier l'intégration côté renderer -->
   <script src="https://cdn.plot.ly/plotly-2.29.0.min.js"></script>
 </head>
 <body>
@@ -16,6 +14,23 @@
       <button id="btn-load">Charger un fichier spectro</button>
       <span id="file-name">Aucun fichier sélectionné</span>
     </header>
+    
+    <div class="controls-panel">
+      <div class="radio-group">
+        <label><input type="radio" name="calc-mode" value="auto" checked> Tangente Automatique</label>
+        <label><input type="radio" name="calc-mode" value="manual"> Tangente Manuelle</label>
+      </div>
+      <div id="manual-inputs" style="display: none;">
+        <label>Lambda Gauche: <input type="number" id="manual-left" value="380" min="350" max="600"></label>
+        <label>Lambda Droit: <input type="number" id="manual-right" value="500" min="400" max="750"></label>
+      </div>
+    </div>
+
+    <!-- Zone d'alertes qualité -->
+    <div id="warnings-box" class="warnings-box" style="display: none;">
+      <h4 style="margin-top:0;">⚠️ Avertissements qualité :</h4>
+      <ul id="warnings-list"></ul>
+    </div>
     
     <main>
       <div class="results-panel">
