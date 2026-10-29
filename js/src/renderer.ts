@@ -1,18 +1,10 @@
-// src/renderer.ts
-
 declare const electronAPI: {
   openFile: () => Promise<{ fileName: string, data: string } | null>;
 };
 declare const Plotly: any;
 
-interface SpectroPoint {
-  wl: number;
-  abs: number;
-  smoothAbs?: number;
-  tangent?: number;
-}
+interface SpectroPoint { wl: number; abs: number; smoothAbs?: number; tangent?: number; }
 
-// Constantes issues de votre script R
 const CSV_SKIP_ROWS = 16;
 const SMOOTH_GAUSSIAN_SIGMA = 3;
 const INF_POINT_LEFT_LLOW = 353;
@@ -21,24 +13,44 @@ const INF_POINT_RIGHT_LLOW = 479;
 const INF_POINT_RIGHT_LHIGH = 550;
 const CHECK_LEFT = 350;
 const CHECK_RIGHT = 750;
-const HB_LAMBDA = 414; // Dans votre script c'était 415 pour HB, 414 est classique, j'utilise 415 pour correspondre
-const HB_LAMBDA_R = 415;
+const HB_LAMBDA = 414; // HB_LAMBDA_R
 const BL_LAMBDA = 476;
+const WARNING_LEVEL_OK = 0;
+const WARNING_LEVEL_WARN = 1;
+const WARNING_LEVEL_STOP = 2;
 const RESIDUALS_THRESHOLD_WARNING = 1e-4;
 const RESIDUALS_THRESHOLD_ERROR = 1e-3;
 
+// État global pour permettre le recalcul lors du changement auto/manuel sans recharger le fichier
+let currentSpectrum: SpectroPoint[] = [];
+let currentRawDataExists = false;
+
+// ---- Événements UI ----
 document.getElementById('btn-load')?.addEventListener('click', async () => {
   const result = await electronAPI.openFile();
   if (result) {
     document.getElementById('file-name')!.innerText = result.fileName;
-    processData(result.data, result.fileName);
+    loadAndProcessFile(result.data, result.fileName);
   }
 });
 
+document.getElementsByName('calc-mode').forEach(radio => {
+  radio.addEventListener('change', (e) => {
+    const isManual = (e.target as HTMLInputElement).value === 'manual';
+    document.getElementById('manual-inputs')!.style.display = isManual ? 'flex' : 'none';
+    if (currentRawDataExists) updateAnalysis();
+  });
+});
+
+document.getElementById('manual-left')?.addEventListener('input', () => { if (currentRawDataExists) updateAnalysis(); });
+document.getElementById('manual-right')?.addEventListener('input', () => { if (currentRawDataExists) updateAnalysis(); });
+
+
+// ---- Fonctions Utilitaires Mathématiques ----
+
 function ksmooth(x: number[], y: number[], bandwidth: number): number[] {
-  // Implémentation basique d'un lissage par noyau gaussien (similaire à ksmooth en R)
   const smoothed: number[] = [];
-  const sigma = bandwidth / 2.355; // Approximation FWHM vers sigma
+  const sigma = bandwidth / 2.355;
   const variance = sigma * sigma;
 
   for (let i = 0; i < x.length; i++) {
@@ -48,9 +60,7 @@ function ksmooth(x: number[], y: number[], bandwidth: number): number[] {
 
     for (let j = 0; j < x.length; j++) {
       const distance = x[j] - targetX;
-      // On ignore les points trop éloignés pour l'optimisation (ex: > 3 sigma)
       if (Math.abs(distance) > 3 * sigma) continue;
-      
       const weight = Math.exp(-(distance * distance) / (2 * variance));
       weightSum += weight;
       ySum += y[j] * weight;
@@ -60,190 +70,208 @@ function ksmooth(x: number[], y: number[], bandwidth: number): number[] {
   return smoothed;
 }
 
-function parseTstData(rawData: string): SpectroPoint[] {
-  // Séparer par tout type d'espace (espaces multiples, sauts de ligne, etc.)
-  const parts = rawData.split(/\s+/);
-  
-  // Convertir toutes les chaînes en nombres (les textes deviendront NaN, ce qui est attendu)
-  const fileValues = parts.map(p => parseFloat(p));
+// Équivalent de approx() en R pour avoir des pas de 1 nm constants
+function interpolateTo1nm(rawData: SpectroPoint[]): SpectroPoint[] {
+  if (rawData.length === 0) return [];
+  const minWl = Math.ceil(rawData[0].wl);
+  const maxWl = Math.floor(rawData[rawData.length - 1].wl);
+  const interpolated: SpectroPoint[] = [];
 
+  for (let wl = minWl; wl <= maxWl; wl++) {
+    const exact = rawData.find(p => p.wl === wl);
+    if (exact) {
+      interpolated.push({ wl, abs: exact.abs });
+    } else {
+      const left = [...rawData].reverse().find(p => p.wl < wl);
+      const right = rawData.find(p => p.wl > wl);
+      if (left && right) {
+        const ratio = (wl - left.wl) / (right.wl - left.wl);
+        const abs = left.abs + ratio * (right.abs - left.abs);
+        interpolated.push({ wl, abs });
+      }
+    }
+  }
+  return interpolated;
+}
+
+// Parseur TST
+function parseTstData(rawData: string): SpectroPoint[] {
+  const parts = rawData.split(/\s+/);
+  const fileValues = parts.map(p => parseFloat(p));
   let readIndex = 0;
   let lastValidTrace: SpectroPoint[] = [];
-  let nTraces = 0;
 
   while (readIndex < fileValues.length - 1) {
     const curValue = fileValues[readIndex];
     const nextValue = fileValues[readIndex + 1];
-
-    // On cherche deux nombres valides consécutifs
     if (!isNaN(curValue) && !isNaN(nextValue)) {
-      // Détection du début de la trace (3500 = 350.0 nm)
       if (curValue === 3500 && nextValue !== 7500) {
         let traceValid = true;
         const currentTrace: SpectroPoint[] = [];
-
-        // Boucle sur les longueurs d'onde attendues : 350 à 750 par pas de 2
         for (let traceIndex = 350; traceIndex <= 750; traceIndex += 2) {
-          if (readIndex + 1 >= fileValues.length) {
-            console.warn("Le fichier se termine au milieu d'une trace.");
-            traceValid = false;
-            break;
-          }
-
-          const wl = fileValues[readIndex] / 10; // ex: 3500 -> 350
-          const t = fileValues[readIndex + 1];   // transmittance
-
-          if (isNaN(wl) || isNaN(t)) {
-            console.warn(`Valeur NaN trouvée à la position: ${readIndex}, attendu: ${traceIndex}`);
-            traceValid = false;
-            break;
-          }
-
-          if (wl !== traceIndex) {
-            console.warn(`Lambda incohérent à la position: ${readIndex}, attendu: ${traceIndex}, reçu: ${wl}`);
-            traceValid = false;
-            break;
-          }
-
-          // Calcul de l'absorbance à partir de la transmittance
-          const abs = Math.log10(1 / t);
-          currentTrace.push({ wl, abs });
+          if (readIndex + 1 >= fileValues.length) { traceValid = false; break; }
+          const wl = fileValues[readIndex] / 10;
+          const t = fileValues[readIndex + 1];
+          if (isNaN(wl) || isNaN(t) || wl !== traceIndex) { traceValid = false; break; }
           
+          currentTrace.push({ wl, abs: Math.log10(1 / t) });
           readIndex += 2;
         }
-
-        // Contrôle qualité de la trace
-        if (traceValid && currentTrace.length === 201) {
-          lastValidTrace = currentTrace;
-          nTraces++;
-        }
-        // Le `for` a déjà avancé le readIndex, on passe à l'itération suivante du `while`
+        if (traceValid && currentTrace.length === 201) lastValidTrace = currentTrace;
         continue;
       }
     }
     readIndex++;
   }
-
-  if (nTraces === 0 || lastValidTrace.length === 0) {
-    throw new Error("Données invalides : impossible de charger la trace depuis le fichier .tst");
-  }
-
-  // Comme dans le script R, on renvoie la dernière trace valide trouvée dans le fichier
+  if (lastValidTrace.length === 0) throw new Error("Données .tst invalides.");
   return lastValidTrace;
 }
 
-function processData(rawData: string, fileName: string) {
-  let spectrum: SpectroPoint[] = [];
+
+// ---- Logique Principale ----
+
+function loadAndProcessFile(rawData: string, fileName: string) {
+  let rawSpectrum: SpectroPoint[] = [];
 
   try {
     if (fileName.toLowerCase().endsWith('.tst')) {
-      // ---------------------------------------------------------
-      // Utilisation du parseur .tst
-      // ---------------------------------------------------------
-      spectrum = parseTstData(rawData);
-      
+      rawSpectrum = parseTstData(rawData);
     } else if (fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().endsWith('.csv')) {
-      // Parseur texte générique (CSV/TXT 2 colonnes)
       const lines = rawData.split('\n');
       for (const line of lines) {
         const parts = line.split(/[,;\t\s]+/);
         if (parts.length >= 2) {
           const wl = parseFloat(parts[0]);
           const abs = parseFloat(parts[1]);
-          if (!isNaN(wl) && !isNaN(abs) && wl >= 350 && wl <= 750) {
-            spectrum.push({ wl, abs });
-          }
+          if (!isNaN(wl) && !isNaN(abs) && wl >= 350 && wl <= 750) rawSpectrum.push({ wl, abs });
         }
       }
     } else {
-      alert("Format de fichier non pris en charge par ce parseur (utilisez .tst, .csv ou .txt).");
+      alert("Format non pris en charge.");
       return;
     }
   } catch (error: any) {
-    alert(error.message);
-    return;
+    alert(error.message); return;
   }
 
-  // Trier par longueur d'onde pour sécuriser la suite
-  spectrum.sort((a, b) => a.wl - b.wl);
-
-  // 1. Lissage des données
-  const wls = spectrum.map(p => p.wl);
-  const rawAbs = spectrum.map(p => p.abs);
-  const smoothAbsArray = ksmooth(wls, rawAbs, SMOOTH_GAUSSIAN_SIGMA);
+  rawSpectrum.sort((a, b) => a.wl - b.wl);
   
-  for (let i = 0; i < spectrum.length; i++) {
-    spectrum[i].smoothAbs = smoothAbsArray[i];
-  }
+  // Interpolation à 1nm (approx dans app.R)
+  currentSpectrum = interpolateTo1nm(rawSpectrum);
 
-  // 2. Recherche de la meilleure tangente (get_auto_best_tangent_parameters)
-  let minResiduals = 999;
-  let bestLeftWl = NaN;
-  let bestRightWl = NaN;
-  let bestTangentValues: number[] = [];
+  // Lissage
+  const wls = currentSpectrum.map(p => p.wl);
+  const rawAbs = currentSpectrum.map(p => p.abs);
+  const smoothAbsArray = ksmooth(wls, rawAbs, SMOOTH_GAUSSIAN_SIGMA);
+  currentSpectrum.forEach((pt, i) => pt.smoothAbs = smoothAbsArray[i]);
 
-  const leftCandidates = spectrum.filter(p => p.wl >= INF_POINT_LEFT_LLOW && p.wl <= INF_POINT_LEFT_LHIGH);
-  const rightCandidates = spectrum.filter(p => p.wl >= INF_POINT_RIGHT_LLOW && p.wl <= INF_POINT_RIGHT_LHIGH);
+  currentRawDataExists = true;
+  updateAnalysis(); // Lance le calcul et l'affichage
+}
 
-  for (const leftPt of leftCandidates) {
-    for (const rightPt of rightCandidates) {
-      if (rightPt.wl <= leftPt.wl) continue;
+function updateAnalysis() {
+  const mode = (document.querySelector('input[name="calc-mode"]:checked') as HTMLInputElement).value;
+  let leftWl = NaN, rightWl = NaN;
 
-      const a = (rightPt.smoothAbs! - leftPt.smoothAbs!) / (rightPt.wl - leftPt.wl);
-      const b = rightPt.smoothAbs! - a * rightPt.wl;
+  // -- 1. Calcul de la Tangente --
+  if (mode === 'auto') {
+    let minResiduals = Infinity;
+    const leftCandidates = currentSpectrum.filter(p => p.wl >= INF_POINT_LEFT_LLOW && p.wl <= INF_POINT_LEFT_LHIGH);
+    const rightCandidates = currentSpectrum.filter(p => p.wl >= INF_POINT_RIGHT_LLOW && p.wl <= INF_POINT_RIGHT_LHIGH);
 
-      let sumResiduals = 0;
-      const currentTangentValues: number[] = [];
-
-      for (const pt of spectrum) {
-        const tgValue = a * pt.wl + b;
-        currentTangentValues.push(tgValue);
+    for (const leftPt of leftCandidates) {
+      for (const rightPt of rightCandidates) {
+        if (rightPt.wl <= leftPt.wl) continue;
+        const a = (rightPt.smoothAbs! - leftPt.smoothAbs!) / (rightPt.wl - leftPt.wl);
+        const b = rightPt.smoothAbs! - a * rightPt.wl;
+        let sumResiduals = 0;
         
-        if (pt.wl >= CHECK_LEFT && pt.wl <= CHECK_RIGHT) {
+        for (const pt of currentSpectrum) {
+          const tgValue = a * pt.wl + b;
+          if (pt.wl >= CHECK_LEFT && pt.wl <= CHECK_RIGHT) {
             const residual = pt.smoothAbs! - tgValue;
-            if (residual < 0) {
-                sumResiduals += (-residual);
-            }
+            if (residual < 0) sumResiduals += (-residual);
+          }
+        }
+
+        if (sumResiduals < minResiduals) {
+          minResiduals = sumResiduals;
+          leftWl = leftPt.wl;
+          rightWl = rightPt.wl;
         }
       }
-
-      if (sumResiduals < minResiduals) {
-        minResiduals = sumResiduals;
-        bestLeftWl = leftPt.wl;
-        bestRightWl = rightPt.wl;
-        bestTangentValues = currentTangentValues;
-      }
     }
+  } else {
+    // Mode manuel
+    leftWl = parseFloat((document.getElementById('manual-left') as HTMLInputElement).value);
+    rightWl = parseFloat((document.getElementById('manual-right') as HTMLInputElement).value);
   }
 
-  // Assignation de la tangente
-  for (let i = 0; i < spectrum.length; i++) {
-      spectrum[i].tangent = bestTangentValues[i];
+  // Application de la droite (y = ax + b)
+  const ptLeft = currentSpectrum.find(p => p.wl === leftWl);
+  const ptRight = currentSpectrum.find(p => p.wl === rightWl);
+  
+  if (ptLeft && ptRight) {
+    const a = (ptRight.smoothAbs! - ptLeft.smoothAbs!) / (ptRight.wl - ptLeft.wl);
+    const b = ptRight.smoothAbs! - a * ptRight.wl;
+    currentSpectrum.forEach(pt => pt.tangent = a * pt.wl + b);
   }
 
-  // 3. Calculs quantitatifs (compute_quantitative_results)
-  // Recherche des points spécifiques
-  const getPtByWl = (targetWl: number) => {
-      // Trouve le point le plus proche si l'exact n'existe pas
-      return spectrum.reduce((prev, curr) => 
-          Math.abs(curr.wl - targetWl) < Math.abs(prev.wl - targetWl) ? curr : prev
-      );
+  // -- 2. Évaluation Clinique et Qualité (compute_quantitative_results) --
+  let warningLevel = WARNING_LEVEL_OK;
+  const warningItems: string[] = [];
+
+  if (currentSpectrum.some(p => p.abs < 0)) {
+    warningItems.push("Valeurs d'absorbance < 0 !");
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
+  }
+  if (currentSpectrum.some(p => p.abs < 0 && p.wl < 550)) {
+    warningItems.push("Valeurs d'absorbance < 0 entre 350 et 550nm !");
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_STOP);
+  }
+  if (mode !== "auto") {
+    warningItems.push("Méthode manuelle choisie: vérifier la cohérence des résultats !");
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
   }
 
-  const hbPt = getPtByWl(HB_LAMBDA_R);
-  const blPt = getPtByWl(BL_LAMBDA);
+  // lambda max où la tangente est positive
+  const positiveTangentsWl = currentSpectrum.filter(p => p.tangent! > 0).map(p => p.wl);
+  const maxTangentCrossWl = positiveTangentsWl.length > 0 ? Math.max(...positiveTangentsWl) : 0;
+  
+  if (maxTangentCrossWl < BL_LAMBDA) {
+    warningItems.push(`La tangente passe par zéro avant ${BL_LAMBDA}nm !`);
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
+  }
 
-  const hbTraceDo = hbPt.smoothAbs!;
-  const blTraceDo = blPt.smoothAbs!;
-  const hbTangentDo = hbPt.tangent!;
-  const blTangentDo = blPt.tangent!;
+  // Calcul strict des résidus (tangente qui coupe la courbe)
+  const restrictedSpectrum = currentSpectrum.filter(p => p.wl >= INF_POINT_LEFT_LLOW && p.wl <= INF_POINT_RIGHT_LHIGH);
+  let sumTotalResiduals = 0;
+  for (const pt of restrictedSpectrum) {
+    const res = pt.smoothAbs! - pt.tangent!;
+    if (res < 0) sumTotalResiduals += (-res); // Si smooth - tg < 0 => tg est au dessus
+  }
 
-  const hbDeltaDo = hbTraceDo - hbTangentDo;
-  const blDeltaDo = blTraceDo - blTangentDo;
+  if (sumTotalResiduals > RESIDUALS_THRESHOLD_ERROR) {
+    warningItems.push(mode === "auto" 
+      ? `Impossible de trouver une tangente sans couper la courbe entre ${INF_POINT_LEFT_LLOW} et ${INF_POINT_RIGHT_LHIGH}nm !` 
+      : `Les positions choisies sont invalides: la tangente passe au-dessus de la courbe entre ${INF_POINT_LEFT_LLOW} et ${INF_POINT_RIGHT_LHIGH}nm !`);
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_STOP);
+  } else if (sumTotalResiduals > RESIDUALS_THRESHOLD_WARNING) {
+    warningItems.push(mode === "auto" 
+      ? `Impossible de trouver une tangente sans couper la courbe entre ${INF_POINT_LEFT_LLOW} et ${INF_POINT_RIGHT_LHIGH}nm !` 
+      : `Les positions choisies sont douteuses: la tangente passe au-dessus de la courbe entre ${INF_POINT_LEFT_LLOW} et ${INF_POINT_RIGHT_LHIGH}nm !`);
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
+  }
 
-  // 4. Évaluation des conclusions
+  // Points et Deltas
+  const hbPt = currentSpectrum.find(p => p.wl === HB_LAMBDA) || currentSpectrum[0];
+  const blPt = currentSpectrum.find(p => p.wl === BL_LAMBDA) || currentSpectrum[0];
+
+  const hbDeltaDo = hbPt.smoothAbs! - hbPt.tangent!;
+  const blDeltaDo = blPt.smoothAbs! - blPt.tangent!;
+
   const hbConcl = hbDeltaDo >= 0.1 ? ">0.1" : (hbDeltaDo >= 0.02 ? ">0.02" : "<0.02");
-  const blConcl = blDeltaDo >= 0.007 ? ">0.007" : "<0.007"; // Note: J'ai corrigé le text R '>0.07' de votre code en '>0.007' pour rester cohérent
+  const blConcl = blDeltaDo >= 0.007 ? ">0.007" : "<0.007";
 
   let comConcl = "?";
   if (blConcl === "<0.007") {
@@ -256,79 +284,54 @@ function processData(rawData: string, fileName: string) {
     }
   } else {
     if (hbConcl === ">0.1" || hbConcl === ">0.02") {
-      comConcl = "C4 : Présence de bilirubine et d’hémoglobine. Résultat compatible avec une hémorragie sous-arachnoïdienne. (Attention: non spécifique, autres étiologies possibles).";
+      comConcl = "C4 : Présence de bilirubine et d’hémoglobine. Résultat compatible avec une hémorragie sous-arachnoïdienne. (Attention: non spécifique).";
     } else {
       comConcl = "Delta DO bilirubine positif! Regarder la protéinorachie et la bilirubinémie plasmatique pour conclure.";
     }
   }
 
-  // 5. Mise à jour de l'UI
+  // -- 3. Mise à jour Interface UI --
+  const warningsBox = document.getElementById('warnings-box')!;
+  const warningsList = document.getElementById('warnings-list')!;
+  
+  if (warningItems.length > 0) {
+    warningsBox.style.display = 'block';
+    warningsBox.className = `warnings-box level-${warningLevel}`;
+    warningsList.innerHTML = warningItems.map(w => `<li>${w}</li>`).join('');
+  } else {
+    warningsBox.style.display = 'none';
+  }
+
   document.getElementById('val-noa')!.innerText = hbDeltaDo.toFixed(4);
   document.getElementById('val-nba')!.innerText = blDeltaDo.toFixed(4);
 
   const conclusionEl = document.getElementById('val-conclusion')!;
   conclusionEl.innerText = comConcl;
-  
   if (blDeltaDo > 0.007) {
-    conclusionEl.style.backgroundColor = '#fee2e2';
-    conclusionEl.style.color = '#991b1b';
+    conclusionEl.style.backgroundColor = '#fee2e2'; conclusionEl.style.color = '#991b1b';
   } else {
-    conclusionEl.style.backgroundColor = '#dcfce7';
-    conclusionEl.style.color = '#166534';
+    conclusionEl.style.backgroundColor = '#dcfce7'; conclusionEl.style.color = '#166534';
   }
 
-  // 6. Tracé Plotly
-  const traceRaw = {
-    x: spectrum.map(p => p.wl),
-    y: spectrum.map(p => p.abs),
-    mode: 'lines',
-    name: 'Brut',
-    line: { color: 'lightgray' }
-  };
-
-  const traceSmooth = {
-    x: spectrum.map(p => p.wl),
-    y: spectrum.map(p => p.smoothAbs),
-    mode: 'lines',
-    name: 'Lissé',
-    line: { color: 'black' }
-  };
-
-  const traceTangent = {
-    x: spectrum.map(p => p.wl),
-    y: spectrum.map(p => p.tangent),
-    mode: 'lines',
-    name: 'Tangente',
-    line: { color: 'red' }
-  };
-
-  // Points de la tangente
+  // -- 4. Tracé Plotly --
+  const traceRaw = { x: currentSpectrum.map(p => p.wl), y: currentSpectrum.map(p => p.abs), mode: 'lines', name: 'Brut', line: { color: 'lightgray' } };
+  const traceSmooth = { x: currentSpectrum.map(p => p.wl), y: currentSpectrum.map(p => p.smoothAbs), mode: 'lines', name: 'Lissé', line: { color: 'black' } };
+  const traceTangent = { x: currentSpectrum.map(p => p.wl), y: currentSpectrum.map(p => p.tangent), mode: 'lines', name: 'Tangente', line: { color: 'red' } };
+  
   const traceTangentPoints = {
-      x: [bestLeftWl, bestRightWl],
-      y: [getPtByWl(bestLeftWl).smoothAbs, getPtByWl(bestRightWl).smoothAbs],
-      mode: 'markers',
-      name: 'Points Tangente',
-      marker: { color: 'red', size: 8 }
-  }
+      x: [leftWl, rightWl],
+      y: [ptLeft?.smoothAbs, ptRight?.smoothAbs],
+      mode: 'markers', name: 'Points Tangente', marker: { color: 'red', size: 8 }
+  };
 
   const layout = {
     title: 'Spectre d\'absorption',
     xaxis: { title: 'Longueur d\'onde (nm)', range: [350, 750] },
-    yaxis: { title: 'Absorbance', autorange: true }, // Vous pouvez adapter ylim_max comme dans plot_spectrum
+    yaxis: { title: 'Absorbance' },
     margin: { t: 40, l: 50, r: 20, b: 40 },
     shapes: [
-        // Ligne verticale pour HB
-        {
-            type: 'line',
-            x0: HB_LAMBDA_R, y0: 0, x1: HB_LAMBDA_R, y1: getPtByWl(HB_LAMBDA_R).abs,
-            line: { color: 'black', dash: 'dot', width: 2 }
-        },
-        // Ligne verticale pour BL
-        {
-            type: 'line',
-            x0: BL_LAMBDA, y0: 0, x1: BL_LAMBDA, y1: getPtByWl(BL_LAMBDA).abs,
-            line: { color: 'black', dash: 'dot', width: 2 }
-        }
+        { type: 'line', x0: HB_LAMBDA, y0: 0, x1: HB_LAMBDA, y1: hbPt?.abs || 0.1, line: { color: 'black', dash: 'dot', width: 2 } },
+        { type: 'line', x0: BL_LAMBDA, y0: 0, x1: BL_LAMBDA, y1: blPt?.abs || 0.1, line: { color: 'black', dash: 'dot', width: 2 } }
     ]
   };
 
