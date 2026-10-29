@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <!-- Content Security Policy basique -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.plot.ly; style-src 'self' 'unsafe-inline';">
+  <title>Analyse Spectrophotométrique LCR</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Plotly via CDN pour simplifier l'intégration côté renderer -->
+  <script src="https://cdn.plot.ly/plotly-2.29.0.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Analyse Xanthochromie LCR</h1>
+      <button id="btn-load">Charger un fichier spectro</button>
+      <span id="file-name">Aucun fichier sélectionné</span>
+    </header>
+    
+    <main>
+      <div class="results-panel">
+        <div class="metric">
+          <h3>NOA (Oxyhémoglobine - 414 nm)</h3>
+          <p id="val-noa">--</p>
+        </div>
+        <div class="metric">
+          <h3>NBA (Bilirubine - 476 nm)</h3>
+          <p id="val-nba">--</p>
+        </div>
+        <div class="conclusion" id="val-conclusion">
+          En attente de données...
+        </div>
+      </div>
+
+      <div class="chart-container">
+        <div id="plotly-div"></div>
+      </div>
+    </main>
+  </div>
+  
+  <script src="./dist/renderer.js"></script>
+</body>
+</html>
