@@ -60,33 +60,112 @@ function ksmooth(x: number[], y: number[], bandwidth: number): number[] {
   return smoothed;
 }
 
+function parseTstData(rawData: string): SpectroPoint[] {
+  // Séparer par tout type d'espace (espaces multiples, sauts de ligne, etc.)
+  const parts = rawData.split(/\s+/);
+  
+  // Convertir toutes les chaînes en nombres (les textes deviendront NaN, ce qui est attendu)
+  const fileValues = parts.map(p => parseFloat(p));
+
+  let readIndex = 0;
+  let lastValidTrace: SpectroPoint[] = [];
+  let nTraces = 0;
+
+  while (readIndex < fileValues.length - 1) {
+    const curValue = fileValues[readIndex];
+    const nextValue = fileValues[readIndex + 1];
+
+    // On cherche deux nombres valides consécutifs
+    if (!isNaN(curValue) && !isNaN(nextValue)) {
+      // Détection du début de la trace (3500 = 350.0 nm)
+      if (curValue === 3500 && nextValue !== 7500) {
+        let traceValid = true;
+        const currentTrace: SpectroPoint[] = [];
+
+        // Boucle sur les longueurs d'onde attendues : 350 à 750 par pas de 2
+        for (let traceIndex = 350; traceIndex <= 750; traceIndex += 2) {
+          if (readIndex + 1 >= fileValues.length) {
+            console.warn("Le fichier se termine au milieu d'une trace.");
+            traceValid = false;
+            break;
+          }
+
+          const wl = fileValues[readIndex] / 10; // ex: 3500 -> 350
+          const t = fileValues[readIndex + 1];   // transmittance
+
+          if (isNaN(wl) || isNaN(t)) {
+            console.warn(`Valeur NaN trouvée à la position: ${readIndex}, attendu: ${traceIndex}`);
+            traceValid = false;
+            break;
+          }
+
+          if (wl !== traceIndex) {
+            console.warn(`Lambda incohérent à la position: ${readIndex}, attendu: ${traceIndex}, reçu: ${wl}`);
+            traceValid = false;
+            break;
+          }
+
+          // Calcul de l'absorbance à partir de la transmittance
+          const abs = Math.log10(1 / t);
+          currentTrace.push({ wl, abs });
+          
+          readIndex += 2;
+        }
+
+        // Contrôle qualité de la trace
+        if (traceValid && currentTrace.length === 201) {
+          lastValidTrace = currentTrace;
+          nTraces++;
+        }
+        // Le `for` a déjà avancé le readIndex, on passe à l'itération suivante du `while`
+        continue;
+      }
+    }
+    readIndex++;
+  }
+
+  if (nTraces === 0 || lastValidTrace.length === 0) {
+    throw new Error("Données invalides : impossible de charger la trace depuis le fichier .tst");
+  }
+
+  // Comme dans le script R, on renvoie la dernière trace valide trouvée dans le fichier
+  return lastValidTrace;
+}
+
 function processData(rawData: string, fileName: string) {
   let spectrum: SpectroPoint[] = [];
 
-  // Détection basique du type de fichier selon l'extension
-  if (fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().endsWith('.csv') || fileName.toLowerCase().endsWith('.tst')) {
-      // Pour l'instant, on utilise un parseur simple pour le texte
-      // À adapter spécifiquement pour load_data_tst si nécessaire
+  try {
+    if (fileName.toLowerCase().endsWith('.tst')) {
+      // ---------------------------------------------------------
+      // Utilisation du parseur .tst
+      // ---------------------------------------------------------
+      spectrum = parseTstData(rawData);
+      
+    } else if (fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().endsWith('.csv')) {
+      // Parseur texte générique (CSV/TXT 2 colonnes)
       const lines = rawData.split('\n');
       for (const line of lines) {
-        // Gère différents séparateurs
         const parts = line.split(/[,;\t\s]+/);
         if (parts.length >= 2) {
-             const wl = parseFloat(parts[0]);
-             const abs = parseFloat(parts[1]);
-             if (!isNaN(wl) && !isNaN(abs) && wl >= 350 && wl <= 750) {
-                 spectrum.push({ wl, abs });
-             }
+          const wl = parseFloat(parts[0]);
+          const abs = parseFloat(parts[1]);
+          if (!isNaN(wl) && !isNaN(abs) && wl >= 350 && wl <= 750) {
+            spectrum.push({ wl, abs });
+          }
         }
       }
-  } else {
-      alert("Le parsing des fichiers .xlsx nécessite l'ajout d'une librairie comme xlsx (SheetJS) dans le projet. Pour le moment, l'application lit des fichiers texte.");
+    } else {
+      alert("Format de fichier non pris en charge par ce parseur (utilisez .tst, .csv ou .txt).");
       return;
+    }
+  } catch (error: any) {
+    alert(error.message);
+    return;
   }
 
-  // Trier par longueur d'onde et s'assurer de l'unicité
+  // Trier par longueur d'onde pour sécuriser la suite
   spectrum.sort((a, b) => a.wl - b.wl);
-  // (L'étape d'interpolation 'approx' du R est omise ici si on suppose des données à pas de 1nm ou 2nm constants)
 
   // 1. Lissage des données
   const wls = spectrum.map(p => p.wl);
