@@ -42,7 +42,7 @@ ipcMain.handle('dialog:openFile', async () => {
   if (canceled || filePaths.length === 0) {
     return null;
   } else {
-    const rawData = fs.readFileSync(filePaths[0], 'utf-8');
+    const rawData = fs.readFileSync(filePaths[0], 'latin1');
     return { fileName: path.basename(filePaths[0]), data: rawData };
   }
 });
