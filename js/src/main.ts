@@ -4,8 +4,8 @@ import * as fs from 'fs';
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1920,
+    height: 1080,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -36,12 +36,18 @@ app.on('window-all-closed', () => {
 ipcMain.handle('dialog:openFile', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openFile'],
-    filters: [{ name: 'Données Spectro', extensions: ['csv', 'txt'] }]
+    filters: [
+      // Le premier élément de la liste s'affiche par défaut
+      { name: 'Fichiers supportés', extensions: ['tst'] },
+      { name: 'Tous les fichiers', extensions: ['*'] }
+    ]
   });
   
   if (canceled || filePaths.length === 0) {
     return null;
   } else {
+    // Attention : la lecture en 'latin1' fonctionne pour le texte (.tst, .csv)
+    // mais corrompra les fichiers binaires (.xlsx).
     const rawData = fs.readFileSync(filePaths[0], 'latin1');
     return { fileName: path.basename(filePaths[0]), data: rawData };
   }

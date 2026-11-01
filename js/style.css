@@ -7,6 +7,11 @@
   --border: #e5e7eb;
 }
 
+html {
+  /* La taille de base s'ajustera dynamiquement entre 14px (petits écrans) et 20px (grands écrans) */
+  font-size: clamp(12px, 1vw + 6px, 18px);
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -15,9 +20,9 @@ body {
 }
 
 .container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
+  width: 100%;
+  margin: 0;
+  padding: 3vh 3vw; /* Marges qui respirent selon la taille de l'écran */
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -31,14 +36,31 @@ header {
   margin-bottom: 20px;
 }
 
+.title-group {
+  max-width: 50%; /* Bloque la largeur à la moitié de l'écran, forçant le texte à passer à la ligne */
+  margin: 0px;
+}
+
+#btn-load {
+  margin-left: auto; /* Absorbe tout l'espace vide restant, poussant le bouton et le nom du fichier tout à droite */
+}
+
+.subtitle {
+  font-size: 1.2em; /* Un peu plus petit que la police de base */
+  color: #6b7280; /* Gris discret */
+  display: block; /* S'assure qu'il passe bien à la ligne en dessous du titre */
+  margin-top: 0px;
+}
+
 button {
   background-color: var(--accent);
   color: white;
   border: none;
-  padding: 10px 20px;
+  padding: 0.8em 1.5em; /* Utilisation de 'em' au lieu de 'px' */
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
+  font-size: 1rem; /* S'adapte à la taille définie dans html */
   transition: background-color 0.2s;
 }
 
@@ -123,8 +145,9 @@ main {
 }
 
 #manual-inputs input {
-  width: 70px;
-  padding: 5px;
+  width: 5em;
+  padding: 0.4em;
+  font-size: 1rem;
   border: 1px solid var(--border);
   border-radius: 4px;
 }
@@ -151,4 +174,25 @@ main {
 .warnings-box ul {
   margin: 0;
   padding-left: 20px;
+}
+
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.slider-group label {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.slider-val {
+  color: var(--accent); /* Met la valeur en surbrillance bleue */
+}
+
+.slider-group input[type="range"] {
+  width: 150px;
+  cursor: pointer;
 }

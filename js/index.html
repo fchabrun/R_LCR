@@ -3,43 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.plot.ly; style-src 'self' 'unsafe-inline';">
-  <title>Analyse Spectrophotométrique LCR</title>
+  <title>Analyse spectrophotométrique du LCR</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.plot.ly/plotly-2.29.0.min.js"></script>
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>Analyse Xanthochromie LCR</h1>
-      <button id="btn-load">Charger un fichier spectro</button>
+	<header>
+      <div class="title-group">
+		<h1>Analyse spectrophotométrique du LCR<br>à la recherche de pigments xanthochromiques</h1>
+        <span class="subtitle">CHU Angers</span>
+      </div>
+      <button id="btn-load">Charger un fichier spectrophotométrique</button>
       <span id="file-name">Aucun fichier sélectionné</span>
     </header>
     
     <div class="controls-panel">
       <div class="radio-group">
-        <label><input type="radio" name="calc-mode" value="auto" checked> Tangente Automatique</label>
-        <label><input type="radio" name="calc-mode" value="manual"> Tangente Manuelle</label>
+        <label><input type="radio" name="calc-mode" value="auto" checked> Tangente automatique</label>
+        <label><input type="radio" name="calc-mode" value="manual"> Tangente manuelle</label>
       </div>
-      <div id="manual-inputs" style="display: none;">
-        <label>Lambda Gauche: <input type="number" id="manual-left" value="380" min="350" max="600"></label>
-        <label>Lambda Droit: <input type="number" id="manual-right" value="500" min="400" max="750"></label>
+	  
+	  <div id="manual-inputs" style="display: none;">
+        <div class="slider-group">
+          <label>&lambda; point gauche: <span id="val-manual-left" class="slider-val">380</span> nm</label>
+          <input type="range" id="manual-left" value="380" min="350" max="600" step="1">
+        </div>
+        <div class="slider-group">
+          <label>&lambda; point droit: <span id="val-manual-right" class="slider-val">500</span> nm</label>
+          <input type="range" id="manual-right" value="500" min="400" max="750" step="1">
+        </div>
       </div>
+	  
     </div>
 
     <!-- Zone d'alertes qualité -->
     <div id="warnings-box" class="warnings-box" style="display: none;">
-      <h4 style="margin-top:0;">⚠️ Avertissements qualité :</h4>
+      <h4 style="margin-top:0;">Avertissements qualité :</h4>
       <ul id="warnings-list"></ul>
+      <p id="warnings-footer" style="margin-top: 15px; font-weight: 500; font-size: 0.95rem; color: #7f1d1d;"></p>
     </div>
-    
+	
     <main>
       <div class="results-panel">
         <div class="metric">
-          <h3>NOA (Oxyhémoglobine - 414 nm)</h3>
+          <h3>NOA (net oxyhemoglobin absorbance - 415 nm)</h3>
           <p id="val-noa">--</p>
         </div>
         <div class="metric">
-          <h3>NBA (Bilirubine - 476 nm)</h3>
+          <h3>NBA (net bilirubin absorbance - 476 nm)</h3>
           <p id="val-nba">--</p>
         </div>
         <div class="conclusion" id="val-conclusion">

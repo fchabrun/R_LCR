@@ -13,7 +13,7 @@ const INF_POINT_RIGHT_LLOW = 479;
 const INF_POINT_RIGHT_LHIGH = 550;
 const CHECK_LEFT = 350;
 const CHECK_RIGHT = 750;
-const HB_LAMBDA = 414; // HB_LAMBDA_R
+const HB_LAMBDA = 415;
 const BL_LAMBDA = 476;
 const WARNING_LEVEL_OK = 0;
 const WARNING_LEVEL_WARN = 1;
@@ -42,8 +42,14 @@ document.getElementsByName('calc-mode').forEach(radio => {
   });
 });
 
-document.getElementById('manual-left')?.addEventListener('input', () => { if (currentRawDataExists) updateAnalysis(); });
-document.getElementById('manual-right')?.addEventListener('input', () => { if (currentRawDataExists) updateAnalysis(); });
+document.getElementById('manual-left')?.addEventListener('input', (e) => { 
+  document.getElementById('val-manual-left')!.innerText = (e.target as HTMLInputElement).value;
+  if (currentRawDataExists) updateAnalysis(); 
+});
+document.getElementById('manual-right')?.addEventListener('input', (e) => { 
+  document.getElementById('val-manual-right')!.innerText = (e.target as HTMLInputElement).value;
+  if (currentRawDataExists) updateAnalysis(); 
+});
 
 
 // ---- Fonctions Utilitaires Mathématiques ----
@@ -136,16 +142,6 @@ function loadAndProcessFile(rawData: string, fileName: string) {
   try {
     if (fileName.toLowerCase().endsWith('.tst')) {
       rawSpectrum = parseTstData(rawData);
-    } else if (fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().endsWith('.csv')) {
-      const lines = rawData.split('\n');
-      for (const line of lines) {
-        const parts = line.split(/[,;\t\s]+/);
-        if (parts.length >= 2) {
-          const wl = parseFloat(parts[0]);
-          const abs = parseFloat(parts[1]);
-          if (!isNaN(wl) && !isNaN(abs) && wl >= 350 && wl <= 750) rawSpectrum.push({ wl, abs });
-        }
-      }
     } else {
       alert("Format non pris en charge.");
       return;
@@ -217,24 +213,33 @@ function updateAnalysis() {
     currentSpectrum.forEach(pt => pt.tangent = a * pt.wl + b);
   }
 
-  // -- 2. Évaluation Clinique et Qualité (compute_quantitative_results) --
+  // -- 2. Évaluation Clinique et Qualité --
   let warningLevel = WARNING_LEVEL_OK;
   const warningItems: string[] = [];
 
-  if (currentSpectrum.some(p => p.abs < 0)) {
-    warningItems.push("Valeurs d'absorbance < 0 !");
+  // Amélioration : Distinction des absorbances négatives (faiblement vs significativement)
+  const minAbs = Math.min(...currentSpectrum.map(p => p.abs));
+  const minAbs550 = Math.min(...currentSpectrum.filter(p => p.wl < 550).map(p => p.abs));
+
+  if (minAbs550 < -0.001) {
+    warningItems.push("Valeurs d'absorbance significativement négatives (< -0.001) entre 350 et 550nm !");
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_STOP);
+  } else if (minAbs550 < 0) {
+    warningItems.push("Valeurs d'absorbance faiblement négatives (entre 0 et -0.001) entre 350 et 550nm.");
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
+  } else if (minAbs < -0.001) {
+    warningItems.push("Valeurs d'absorbance significativement négatives (< -0.001) sur le reste du spectre !");
+    warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
+  } else if (minAbs < 0) {
+    warningItems.push("Valeurs d'absorbance faiblement négatives (entre 0 et -0.001).");
     warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
   }
-  if (currentSpectrum.some(p => p.abs < 0 && p.wl < 550)) {
-    warningItems.push("Valeurs d'absorbance < 0 entre 350 et 550nm !");
-    warningLevel = Math.max(warningLevel, WARNING_LEVEL_STOP);
-  }
+
   if (mode !== "auto") {
     warningItems.push("Méthode manuelle choisie: vérifier la cohérence des résultats !");
     warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
   }
 
-  // lambda max où la tangente est positive
   const positiveTangentsWl = currentSpectrum.filter(p => p.tangent! > 0).map(p => p.wl);
   const maxTangentCrossWl = positiveTangentsWl.length > 0 ? Math.max(...positiveTangentsWl) : 0;
   
@@ -243,12 +248,11 @@ function updateAnalysis() {
     warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
   }
 
-  // Calcul strict des résidus (tangente qui coupe la courbe)
   const restrictedSpectrum = currentSpectrum.filter(p => p.wl >= INF_POINT_LEFT_LLOW && p.wl <= INF_POINT_RIGHT_LHIGH);
   let sumTotalResiduals = 0;
   for (const pt of restrictedSpectrum) {
     const res = pt.smoothAbs! - pt.tangent!;
-    if (res < 0) sumTotalResiduals += (-res); // Si smooth - tg < 0 => tg est au dessus
+    if (res < 0) sumTotalResiduals += (-res);
   }
 
   if (sumTotalResiduals > RESIDUALS_THRESHOLD_ERROR) {
@@ -263,7 +267,6 @@ function updateAnalysis() {
     warningLevel = Math.max(warningLevel, WARNING_LEVEL_WARN);
   }
 
-  // Points et Deltas
   const hbPt = currentSpectrum.find(p => p.wl === HB_LAMBDA) || currentSpectrum[0];
   const blPt = currentSpectrum.find(p => p.wl === BL_LAMBDA) || currentSpectrum[0];
 
@@ -293,17 +296,21 @@ function updateAnalysis() {
   // -- 3. Mise à jour Interface UI --
   const warningsBox = document.getElementById('warnings-box')!;
   const warningsList = document.getElementById('warnings-list')!;
+  const warningsFooter = document.getElementById('warnings-footer')!;
   
+  // Amélioration : Affichage automatique de la recommandation si avertissement
   if (warningItems.length > 0) {
     warningsBox.style.display = 'block';
     warningsBox.className = `warnings-box level-${warningLevel}`;
     warningsList.innerHTML = warningItems.map(w => `<li>${w}</li>`).join('');
+	warningsFooter.innerHTML = "<span style='font-size: 1.2em; margin-right: 5px;'>⚠️</span> L'analyse spectrale doit être refaite après correction des éventuels facteurs interférents (recentrifugation, changement de la cuve et vérification des poussières ou imperfections, chauffage de la lampe du spectrophotomètre > 15 minutes...) avant toute interprétation.";
   } else {
     warningsBox.style.display = 'none';
   }
 
-  document.getElementById('val-noa')!.innerText = hbDeltaDo.toFixed(4);
-  document.getElementById('val-nba')!.innerText = blDeltaDo.toFixed(4);
+  // Amélioration : Ajout des seuils descriptifs (<0.02, etc.) à côté des valeurs
+  document.getElementById('val-noa')!.innerHTML = `${hbDeltaDo.toFixed(4)} <span style="font-size: 1.1rem; font-weight: normal; color: #6b7280;">(${hbConcl})</span>`;
+  document.getElementById('val-nba')!.innerHTML = `${blDeltaDo.toFixed(4)} <span style="font-size: 1.1rem; font-weight: normal; color: #6b7280;">(${blConcl})</span>`;
 
   const conclusionEl = document.getElementById('val-conclusion')!;
   conclusionEl.innerText = comConcl;
@@ -324,10 +331,14 @@ function updateAnalysis() {
       mode: 'markers', name: 'Points Tangente', marker: { color: 'red', size: 8 }
   };
 
+  // Amélioration : Adaptation de l'échelle d'absorbance (Y-axis)
+  const maxAbs = Math.max(...currentSpectrum.map(p => p.abs));
+  const yAxisMax = maxAbs > 0.1 ? maxAbs : 0.1;
+
   const layout = {
     title: 'Spectre d\'absorption',
     xaxis: { title: 'Longueur d\'onde (nm)', range: [350, 750] },
-    yaxis: { title: 'Absorbance' },
+    yaxis: { title: 'Absorbance', range: [0, yAxisMax] },
     margin: { t: 40, l: 50, r: 20, b: 40 },
     shapes: [
         { type: 'line', x0: HB_LAMBDA, y0: 0, x1: HB_LAMBDA, y1: hbPt?.abs || 0.1, line: { color: 'black', dash: 'dot', width: 2 } },

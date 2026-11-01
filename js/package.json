@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+	"dev": "npm run start"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
