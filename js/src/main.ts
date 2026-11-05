@@ -52,3 +52,34 @@ ipcMain.handle('dialog:openFile', async () => {
     return { fileName: path.basename(filePaths[0]), data: rawData };
   }
 });
+
+ipcMain.handle('dialog:exportPdf', async (event, defaultFilename: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return { success: false, error: "Fenêtre introuvable" };
+
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Enregistrer le rapport PDF',
+    defaultPath: defaultFilename || 'Rapport_LCR.pdf',
+    filters: [
+      { name: 'Fichiers PDF', extensions: ['pdf'] }
+    ]
+  });
+
+  if (canceled || !filePath) {
+    return { success: false, canceled: true };
+  }
+
+  try {
+    // Utilisation du moteur Chromium natif pour générer le PDF
+    const pdfData = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { marginType: 'printableArea' }
+    });
+    
+    fs.writeFileSync(filePath, pdfData);
+    return { success: true, filePath };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
