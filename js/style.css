@@ -196,3 +196,44 @@ main {
   width: 150px;
   cursor: pointer;
 }
+
+@media print {
+  /* Masquer les éléments interactifs et les contrôles */
+  #btn-load, .controls-panel, #btn-export-pdf {
+    display: none !important;
+  }
+  
+  /* Ajuster la page pour un rendu A4 */
+  body, .container {
+    background-color: #ffffff;
+    height: auto;
+    padding: 0;
+    margin: 0;
+  }
+  
+  /* Réorganiser le flexbox pour empiler les résultats au-dessus du graphique */
+  main {
+    flex-direction: column;
+    display: block;
+  }
+  
+  .results-panel {
+    box-shadow: none;
+    border: 1px solid var(--border);
+    margin-bottom: 20px;
+    width: 100%;
+    page-break-inside: avoid;
+  }
+  
+  .chart-container {
+    box-shadow: none;
+    border: 1px solid var(--border);
+    width: 100%;
+    height: 500px; /* Hauteur fixe pour forcer Plotly à bien s'imprimer */
+    page-break-inside: avoid;
+  }
+  
+  .warnings-box {
+    page-break-inside: avoid;
+  }
+}
