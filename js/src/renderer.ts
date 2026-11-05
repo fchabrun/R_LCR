@@ -1,5 +1,6 @@
 declare const electronAPI: {
   openFile: () => Promise<{ fileName: string, data: string } | null>;
+  exportPdf: (defaultFilename: string) => Promise<{ success: boolean, canceled?: boolean, filePath?: string, error?: string }>;
 };
 declare const Plotly: any;
 
@@ -51,6 +52,19 @@ document.getElementById('manual-right')?.addEventListener('input', (e) => {
   if (currentRawDataExists) updateAnalysis(); 
 });
 
+document.getElementById('btn-export-pdf')?.addEventListener('click', async () => {
+  const fileNameEl = document.getElementById('file-name');
+  // Récupérer le nom du fichier source pour nommer le PDF intelligemment
+  const baseName = fileNameEl && fileNameEl.innerText !== 'Aucun fichier sélectionné' 
+    ? fileNameEl.innerText.replace(/\.[^/.]+$/, "") 
+    : 'Rapport_LCR';
+  
+  const result = await electronAPI.exportPdf(`${baseName}.pdf`);
+  
+  if (result && !result.success && !result.canceled) {
+    alert("Erreur lors de l'enregistrement du PDF : " + result.error);
+  }
+});
 
 // ---- Fonctions Utilitaires Mathématiques ----
 
@@ -347,4 +361,8 @@ function updateAnalysis() {
   };
 
   Plotly.newPlot('plotly-div', [traceRaw, traceSmooth, traceTangent, traceTangentPoints], layout, { responsive: true });
+
+  // Afficher le bouton PDF une fois l'analyse terminée
+  const btnExport = document.getElementById('btn-export-pdf');
+  if (btnExport) btnExport.style.display = 'block';
 }
